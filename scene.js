@@ -205,7 +205,10 @@ function solveIK(armParts, target, maxIterations = 100, threshold = 0.01) {
 
       // Apply the rotation to the joint, clamped to its limits
       const newRotation = joint.rotation.y + angle;
-      joint.rotation.y = newRotation; //clampRotation(i - 1, newRotation); // i - 1 because joint limits start at Joint 1
+
+      if (i != armParts.length - 2) {
+        joint.rotation.y = newRotation; //clampRotation(i - 1, newRotation); // i - 1 because joint limits start at Joint 1
+      }
 
       // Update end effector position
       const currentEndEffectorPosition = getWorldPosition(endEffector);
@@ -227,9 +230,6 @@ const targetHelper = new THREE.Mesh(
 targetHelper.position.copy(target);
 scene.add(targetHelper);
 
-const targetEnd = new THREE.Vector3(0.5, 0.5, 0.5); // End target position
-let targetSpeed = 0.0005; // Speed of the target movement
-
 // Add light to the scene
 const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
 directionalLight.position.set(1, 1, 1).normalize();
@@ -245,21 +245,156 @@ function animate() {
   requestAnimationFrame(animate);
 
   if (target != null) {
-    if (target.x >= targetEnd.x && targetSpeed > 0) {
-      targetSpeed *= -1;
-    } else if (target.x <= 0 && targetSpeed < 0) {
-      targetSpeed *= -1;
-    }
-
-    target.x += targetSpeed;
-    //target.y += targetSpeed;
-    target.z += targetSpeed;
-
     targetHelper.position.copy(target);
     solveIK(armParts, target);
   }
 
   renderer.render(scene, camera);
 }
+
+function generateMaze(width, height) {
+  const maze = Array.from({ length: height }, () => Array(width).fill(0));
+  const directions = [
+    { x: 0, y: -1 }, // Up
+    { x: 1, y: 0 }, // Right
+    { x: 0, y: 1 }, // Down
+    { x: -1, y: 0 }, // Left
+  ];
+
+  function isInBounds(x, y) {
+    return x >= 0 && x < width && y >= 0 && y < height;
+  }
+
+  function shuffle(array) {
+    for (let i = array.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [array[i], array[j]] = [array[j], array[i]];
+    }
+  }
+
+  function carvePassagesFrom(x, y) {
+    maze[y][x] = 1;
+    shuffle(directions);
+
+    for (const { x: dx, y: dy } of directions) {
+      const nx = x + dx * 2;
+      const ny = y + dy * 2;
+
+      if (isInBounds(nx, ny) && maze[ny][nx] === 0) {
+        maze[y + dy][x + dx] = 1;
+        carvePassagesFrom(nx, ny);
+      }
+    }
+  }
+
+  carvePassagesFrom(0, 0);
+
+  const points = [];
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (maze[y][x] === 1) {
+        points.push({ x, y, isExit: false });
+      }
+    }
+  }
+
+  points[points.length - 1].isExit = true;
+
+  return points;
+}
+
+const mazePoints = generateMaze(10, 10);
+console.log(mazePoints);
+
+const mazeMaterial = new THREE.MeshPhongMaterial({ color: 0x00ff00 });
+const exitMaterial = new THREE.MeshPhongMaterial({ color: 0xff0000 });
+const cubeSize = 0.05;
+
+mazePoints.forEach((point) => {
+  const material = point.isExit ? exitMaterial : mazeMaterial;
+
+  const cubeGeometry = new THREE.BoxGeometry(cubeSize, cubeSize, cubeSize);
+  const cube = new THREE.Mesh(cubeGeometry, material);
+  cube.position.set(point.x * cubeSize, cubeSize / 2, point.y * cubeSize);
+  scene.add(cube);
+});
+
+function heuristic(a, b) {
+  return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+}
+
+function findPath(mazePoints, start, goal) {
+  const openSet = [start];
+  const cameFrom = new Map();
+  const gScore = new Map(mazePoints.map((point) => [point, Infinity]));
+  const fScore = new Map(mazePoints.map((point) => [point, Infinity]));
+
+  gScore.set(start, 0);
+  fScore.set(start, heuristic(start, goal));
+
+  while (openSet.length > 0) {
+    openSet.sort((a, b) => fScore.get(a) - fScore.get(b));
+    const current = openSet.shift();
+
+    if (current === goal) {
+      const path = [];
+      let temp = current;
+      while (temp) {
+        path.push(temp);
+        temp = cameFrom.get(temp);
+      }
+      return path.reverse();
+    }
+
+    const neighbors = mazePoints.filter(
+      (point) =>
+        (Math.abs(point.x - current.x) === 1 && point.y === current.y) ||
+        (Math.abs(point.y - current.y) === 1 && point.x === current.x)
+    );
+
+    for (const neighbor of neighbors) {
+      const tentativeGScore = gScore.get(current) + 1;
+      if (tentativeGScore < gScore.get(neighbor)) {
+        cameFrom.set(neighbor, current);
+        gScore.set(neighbor, tentativeGScore);
+        fScore.set(neighbor, tentativeGScore + heuristic(neighbor, goal));
+        if (!openSet.includes(neighbor)) {
+          openSet.push(neighbor);
+        }
+      }
+    }
+  }
+
+  return [];
+}
+
+const start = mazePoints[0];
+const goal = mazePoints.find((point) => point.isExit);
+const path = findPath(mazePoints, start, goal);
+
+const pathMaterial = new THREE.MeshPhongMaterial({ color: 0x0000ff });
+path.forEach((point) => {
+  const cubeGeometry = new THREE.BoxGeometry(cubeSize, cubeSize, cubeSize);
+  const cube = new THREE.Mesh(cubeGeometry, pathMaterial);
+  cube.position.set(point.x * cubeSize, cubeSize / 2, point.y * cubeSize);
+  scene.add(cube);
+});
+
+let pathIndex = 0;
+
+function moveArmAlongPath() {
+  if (pathIndex < path.length) {
+    target = new THREE.Vector3(
+      path[pathIndex].x * cubeSize,
+      cubeSize / 2,
+      path[pathIndex].y * cubeSize
+    );
+    pathIndex++;
+  } else {
+    pathIndex = 0; // Reset to start the path again
+  }
+}
+
+setInterval(moveArmAlongPath, 500); // Move to the next point every second
 
 animate();
