@@ -132,6 +132,20 @@ function getWorldPosition(object) {
   return position;
 }
 
+function clampRotation(jointIndex, rotation) {
+  const jointLimits = [
+    { min: THREE.MathUtils.degToRad(-180), max: THREE.MathUtils.degToRad(180) }, // Joint 1
+    { min: THREE.MathUtils.degToRad(-270), max: THREE.MathUtils.degToRad(-90) }, // Joint 2
+    { min: THREE.MathUtils.degToRad(-150), max: THREE.MathUtils.degToRad(150) }, // Joint 3
+    { min: THREE.MathUtils.degToRad(-260), max: THREE.MathUtils.degToRad(-80) }, // Joint 4
+    { min: THREE.MathUtils.degToRad(-168), max: THREE.MathUtils.degToRad(168) }, // Joint 5
+    { min: THREE.MathUtils.degToRad(-174), max: THREE.MathUtils.degToRad(174) }, // Joint 6
+  ];
+
+  const limits = jointLimits[jointIndex];
+  return THREE.MathUtils.clamp(rotation, limits.min, limits.max);
+}
+
 function computeAngleToTarget(joint, endEffector, target) {
   // Get world positions of joint, end effector, and target
   const jointPosition = getWorldPosition(joint);
@@ -178,22 +192,20 @@ function computeAngleToTarget(joint, endEffector, target) {
   return angle;
 }
 
-function solveIK(armParts, target, maxIterations = 10000, threshold = 0.01) {
+function solveIK(armParts, target, maxIterations = 100, threshold = 0.01) {
   const endEffector = armParts[armParts.length - 1];
 
   for (let iter = 0; iter < maxIterations; iter++) {
-    // Start from the end effector and work backward
+    // Start from the end effector and work backward (exclude the root/base)
     for (let i = armParts.length - 2; i >= 1; i--) {
       const joint = armParts[i];
 
       // Compute the angle to the target for this joint
       const angle = computeAngleToTarget(joint, endEffector, target);
 
-      // Apply the rotation to the joint (y-axis only)
-      joint.rotation.y += angle;
-
-      // Clamp rotations if needed (e.g., for physical limits)
-      // joint.rotation.y = THREE.MathUtils.clamp(joint.rotation.y, minAngle, maxAngle);
+      // Apply the rotation to the joint, clamped to its limits
+      const newRotation = joint.rotation.y + angle;
+      joint.rotation.y = clampRotation(i - 1, newRotation); // i - 1 because joint limits start at Joint 1
 
       // Update end effector position
       const currentEndEffectorPosition = getWorldPosition(endEffector);
@@ -207,7 +219,7 @@ function solveIK(armParts, target, maxIterations = 10000, threshold = 0.01) {
   return false; // Did not converge
 }
 
-const target = new THREE.Vector3(0.5, 0.1, 0.4); // Example target position
+const target = new THREE.Vector3(0.3, 0.6, 0.0); // Example target position
 const targetHelper = new THREE.Mesh(
   new THREE.SphereGeometry(0.02),
   new THREE.MeshBasicMaterial({ color: 0xff0000 })
