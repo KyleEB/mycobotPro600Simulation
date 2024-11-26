@@ -205,7 +205,7 @@ function solveIK(armParts, target, maxIterations = 100, threshold = 0.01) {
 
       // Apply the rotation to the joint, clamped to its limits
       const newRotation = joint.rotation.y + angle;
-      joint.rotation.y = clampRotation(i - 1, newRotation); // i - 1 because joint limits start at Joint 1
+      joint.rotation.y = newRotation; //clampRotation(i - 1, newRotation); // i - 1 because joint limits start at Joint 1
 
       // Update end effector position
       const currentEndEffectorPosition = getWorldPosition(endEffector);
@@ -219,7 +219,7 @@ function solveIK(armParts, target, maxIterations = 100, threshold = 0.01) {
   return false; // Did not converge
 }
 
-const target = new THREE.Vector3(0.3, 0.6, 0.0); // Example target position
+let target = new THREE.Vector3(0.0, 0.0, 0.0); // Initial target position
 const targetHelper = new THREE.Mesh(
   new THREE.SphereGeometry(0.02),
   new THREE.MeshBasicMaterial({ color: 0xff0000 })
@@ -227,7 +227,8 @@ const targetHelper = new THREE.Mesh(
 targetHelper.position.copy(target);
 scene.add(targetHelper);
 
-solveIK(armParts, target);
+const targetEnd = new THREE.Vector3(0.5, 0.5, 0.5); // End target position
+let targetSpeed = 0.0005; // Speed of the target movement
 
 // Add light to the scene
 const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
@@ -239,5 +240,26 @@ const xyzHelper = new THREE.AxesHelper(100);
 scene.add(xyzHelper);
 
 function animate() {
+  // Move the target along a straight line
+
+  requestAnimationFrame(animate);
+
+  if (target != null) {
+    if (target.x >= targetEnd.x && targetSpeed > 0) {
+      targetSpeed *= -1;
+    } else if (target.x <= 0 && targetSpeed < 0) {
+      targetSpeed *= -1;
+    }
+
+    target.x += targetSpeed;
+    //target.y += targetSpeed;
+    target.z += targetSpeed;
+
+    targetHelper.position.copy(target);
+    solveIK(armParts, target);
+  }
+
   renderer.render(scene, camera);
 }
+
+animate();
