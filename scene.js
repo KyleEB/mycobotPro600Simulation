@@ -43,7 +43,7 @@ function loadSTL(path, material) {
   });
 }
 
-function addAxesHelper(mesh, size = 50) {
+function addAxesHelper(mesh, size = 0.2) {
   const axesHelper = new THREE.AxesHelper(size);
   mesh.add(axesHelper);
 }
@@ -56,7 +56,7 @@ async function loadArmParts() {
     // Load base
     const base = await loadSTL("./urdf/base.stl", material);
     base.position.set(0, 0, 0); // No rotations are free
-    addAxesHelper(base); // Add helper
+    //addAxesHelper(base); // Add helper
     scene.add(base);
 
     armParts.push(base);
@@ -65,7 +65,7 @@ async function loadArmParts() {
     const link1 = await loadSTL("./urdf/link1.stl", material);
     link1.position.set(0, 0.2, 0);
     link1.rotation.set(0, 1.5708, 0); // y is free
-    addAxesHelper(link1); // Add helper
+    //addAxesHelper(link1); // Add helper
     base.add(link1);
 
     armParts.push(link1);
@@ -74,7 +74,7 @@ async function loadArmParts() {
     const link2 = await loadSTL("./urdf/link2.stl", material);
     link2.position.set(0, 0, 0.1);
     link2.rotation.set(1.5708, -1.5708, 0); // y is free
-    addAxesHelper(link2); // Add helper
+    //addAxesHelper(link2); // Add helper
     link1.add(link2);
 
     armParts.push(link2);
@@ -83,7 +83,7 @@ async function loadArmParts() {
     const link3 = await loadSTL("./urdf/link3.stl", material);
     link3.position.set(-0.25, 0, 0);
     link3.rotation.set(0, 0, 0); // y is free
-    addAxesHelper(link3); // Add helper
+    //addAxesHelper(link3); // Add helper
     link2.add(link3);
 
     armParts.push(link3);
@@ -92,7 +92,7 @@ async function loadArmParts() {
     const link4 = await loadSTL("./urdf/link4.stl", material);
     link4.position.set(-0.25, 0.03, 0);
     link4.rotation.set(0, -1.5708, 0); // y is free
-    addAxesHelper(link4); // Add helper
+    //addAxesHelper(link4); // Add helper
     link3.add(link4);
 
     armParts.push(link4);
@@ -101,7 +101,7 @@ async function loadArmParts() {
     const link5 = await loadSTL("./urdf/link5.stl", material);
     link5.position.set(0, 0, 0.115);
     link5.rotation.set(1.5708, 0, 0); // y is free
-    addAxesHelper(link5); // Add helper
+    //addAxesHelper(link5); // Add helper
     link4.add(link5);
 
     armParts.push(link5);
@@ -132,39 +132,58 @@ function getWorldPosition(object) {
   return position;
 }
 
-function setYAxisRotation(joint, angle) {
-  joint.rotation.y = angle;
-}
-
 function computeAngleToTarget(joint, endEffector, target) {
-  // Get positions
+  // Get world positions of joint, end effector, and target
   const jointPosition = getWorldPosition(joint);
   const endEffectorPosition = getWorldPosition(endEffector);
+  const targetPosition = target.clone();
 
-  // Vector to end-effector and target
-  const toEndEffector = endEffectorPosition
+  // Vector from joint to end effector and joint to target in world space
+  const toEndEffector = endEffectorPosition.clone().sub(jointPosition);
+  const toTarget = targetPosition.clone().sub(jointPosition);
+
+  // Normalize the vectors (this gives direction without scaling)
+  toEndEffector.normalize();
+  toTarget.normalize();
+
+  // Transform the target and end effector vectors into the joint's local space
+  // The inverse of the joint's world matrix transforms world coordinates to local coordinates
+  const jointWorldMatrix = joint.matrixWorld;
+  const localToEndEffector = toEndEffector
     .clone()
-    .sub(jointPosition)
-    .normalize();
-  const toTarget = target.clone().sub(jointPosition).normalize();
+    .applyMatrix4(jointWorldMatrix.clone().invert());
+  const localToTarget = toTarget
+    .clone()
+    .applyMatrix4(jointWorldMatrix.clone().invert());
 
-  // Angle between vectors in the xz-plane
+  // Project both vectors onto the XZ plane by setting their Y component to 0
+  localToEndEffector.y = 0;
+  localToTarget.y = 0;
+
+  // Normalize the projected vectors
+  localToEndEffector.normalize();
+  localToTarget.normalize();
+
+  // Compute the angle between the two vectors in the XZ plane (in radians)
+  const angleBetween =
+    Math.atan2(localToTarget.x, localToTarget.z) -
+    Math.atan2(localToEndEffector.x, localToEndEffector.z);
+
+  // Clamp the result to the range of -PI to PI
   const angle =
-    Math.atan2(toTarget.x, toTarget.z) -
-    Math.atan2(toEndEffector.x, toEndEffector.z);
+    THREE.MathUtils.euclideanModulo(angleBetween + Math.PI, 2 * Math.PI) -
+    Math.PI;
 
-  // Clamp to -PI to PI
-  return (
-    THREE.MathUtils.euclideanModulo(angle + Math.PI, 2 * Math.PI) - Math.PI
-  );
+  // This angle is the adjustment needed for the joint's local y-axis
+  return angle;
 }
 
-function solveIK(armParts, target, maxIterations = 10, threshold = 0.01) {
+function solveIK(armParts, target, maxIterations = 10000, threshold = 0.01) {
   const endEffector = armParts[armParts.length - 1];
 
   for (let iter = 0; iter < maxIterations; iter++) {
     // Start from the end effector and work backward
-    for (let i = armParts.length - 2; i >= 0; i--) {
+    for (let i = armParts.length - 2; i >= 1; i--) {
       const joint = armParts[i];
 
       // Compute the angle to the target for this joint
@@ -188,7 +207,7 @@ function solveIK(armParts, target, maxIterations = 10, threshold = 0.01) {
   return false; // Did not converge
 }
 
-const target = new THREE.Vector3(0.3, 0.5, 0.2); // Example target position
+const target = new THREE.Vector3(0.5, 0.1, 0.4); // Example target position
 const targetHelper = new THREE.Mesh(
   new THREE.SphereGeometry(0.02),
   new THREE.MeshBasicMaterial({ color: 0xff0000 })
